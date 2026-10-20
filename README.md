@@ -33,8 +33,7 @@ Precisa ser **Android TV ou Google TV** (Android 9 ou mais novo). Para conferir:
 | Aparelhos ligados na HDMI: **Chromecast com Google TV**, **Google TV Streamer**, TV Box Android, Mi Box, Nvidia Shield | Projetores Android "genéricos": depende de terem Opções do desenvolvedor | **LG** (sistema webOS) |
 | | | **Roku TV** (TCL Roku, Philco Roku, AOC Roku…), **Hisense VIDAA** |
 
-Testado de verdade numa **Aiwa SWTV-20SA** (por dentro é Skyworth/MediaTek, Android TV 11). O projeto original foi testado em Android TV 9, 11 e 12 e Google TV 14.
-
+Testado de verdade numa **Aiwa SWTV-20SA** (por dentro é Skyworth/MediaTek, Android TV 11). 
 ### E Samsung e LG?
 
 **Não dá para instalar esta home nelas.** Samsung usa **Tizen** e LG usa **webOS**: não são Android. Elas não têm o modo de depuração (`adb`), nem aceitam instalar apps de fora da loja nem trocar a tela inicial. Nenhum script consegue mudar isso sem desbloqueios que anulam a garantia, e este projeto não faz isso.
