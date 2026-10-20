@@ -8,8 +8,6 @@ Sem root. Nada é desinstalado. Tudo tem como desfazer.
 
 </div>
 
-Baseado no [tv-detox](https://github.com/Ansub/tv-detox) do **Ansub Khan** (MIT). Esta versão acrescenta:
-
 - **Visual Neon roxo 8-bit:** fontes pixel (Jersey 10, Pixelify Sans, Silkscreen), blocos com cantos em degrau, sombra dura, ícones em pixel.
 - **TV Aberta:** primeiro bloco da home, que abre **sempre na antena**, mesmo se você usou uma HDMI antes.
 - **Fundo animado (GIF) e avatar** opcionais, só no seu computador (não vão para o GitHub).
