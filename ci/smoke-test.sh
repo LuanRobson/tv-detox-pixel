@@ -29,7 +29,8 @@ wait_home || fail "home screen not in front"
 echo "== home screen shows a clock and Settings"
 x=$(ui)
 echo "$x" | grep -q 'text="Settings"' || fail "no Settings tile"
-echo "$x" | grep -qE 'text="[0-9]{1,2}:[0-9]{2}"' || fail "no clock"
+# The clock is three pieces (hours, a purple colon, minutes), so look for the hours and the colon.
+echo "$x" | grep -qE 'text="[0-9]{1,2}"' && echo "$x" | grep -q 'text=":"' || fail "no clock"
 tiles=$(echo "$x" | grep -o 'focusable="true"' | wc -l | tr -d ' ')
 echo "   $tiles tiles"
 
