@@ -6,6 +6,10 @@
 
 Sem root. Nada é desinstalado. Tudo tem como desfazer.
 
+<img src="docs/home-pixel.png" alt="A home Neon roxo 8-bit rodando numa Aiwa Android TV: relógio pixel, bloco TV Aberta, apps e linha de HDMIs" width="100%">
+
+<sub>Print real de uma Aiwa SWTV-20SA. O fundo animado e o avatar são do dono da TV e <b>não vêm no repositório</b>: coloque os seus em <code>assets/</code>.</sub>
+
 </div>
 
 - **Visual Neon roxo 8-bit:** fontes pixel (Jersey 10, Pixelify Sans, Silkscreen), blocos com cantos em degrau, sombra dura, ícones em pixel.
