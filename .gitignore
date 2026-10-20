@@ -3,3 +3,11 @@ key.jks
 *.apk
 .DS_Store
 .idea
+
+# Imagens pessoais (avatar e wallpaper): ficam só na sua máquina. Veja assets/LEIA-ME.md
+assets/avatar.*
+assets/wallpaper.*
+
+mudancas.log
+desfazer-tudo.sh
+backup/

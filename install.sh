@@ -36,7 +36,7 @@ APK=out/tvhome.apk
 if [ ! -f "$APK" ]; then
   APK=$(mktemp -d)/tvhome.apk
   echo "Downloading the home screen…"
-  curl -fsSL -o "$APK" https://github.com/Ansub/tv-detox/releases/latest/download/tvhome.apk
+  curl -fsSL -o "$APK" https://github.com/LuanRobson/tv-detox-pixel/releases/latest/download/tvhome.apk
 fi
 
 echo "Installing… If your TV shows a Google Play Protect message, follow it on the TV to allow the install."
@@ -66,6 +66,12 @@ if [ "$(sh_tv getprop ro.build.version.sdk)" -ge 29 ]; then
   sh_tv cmd role add-role-holder --user 0 android.app.role.HOME com.ansub.tvhome >/dev/null 2>&1 || true
 fi
 sh_tv cmd package set-home-activity "$ME" >/dev/null 2>&1 || true
+
+# Ligar a TV sempre cai nesta home: "sobrepor a outros apps" deixa ela voltar para a frente ao
+# ligar a tela, e "acesso ao uso" diz, na inicialização, se só o Live TV abriu. Sem elas a home
+# funciona igual, só não se traz para a frente sozinha. undo.sh (desinstalar) desfaz as duas.
+sh_tv appops set com.ansub.tvhome SYSTEM_ALERT_WINDOW allow >/dev/null 2>&1 || true
+sh_tv appops set com.ansub.tvhome GET_USAGE_STATS allow >/dev/null 2>&1 || true
 
 # Known TV home screens that are safe to turn off.
 LAUNCHERS="com.google.android.tvlauncher com.google.android.apps.tv.launcherx com.google.android.leanbacklauncher

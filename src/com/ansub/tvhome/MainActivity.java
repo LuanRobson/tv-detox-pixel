@@ -11,6 +11,10 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.BitmapShader;
+import android.graphics.Paint;
+import android.graphics.Shader;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -73,6 +77,9 @@ public class MainActivity extends Activity {
     private static final String PLAY_STORE = "com.android.vending";
     private static final String SETTINGS = "settings";
     private static final String ADD = "add";
+    // "TV Aberta": a fixed first tile that always opens the antenna, even after an HDMI was used.
+    private static final String ANTENNA = "antenna";
+    private static final String ANTENNA_LABEL = "TV Aberta";
     private static final String[] EDIT_ITEMS = {"Move", "Replace", "Remove from home", "Uninstall"};
     private static final String[] EDIT_ITEMS_SYSTEM = {"Move", "Replace", "Remove from home", "App info"};
     private static final int PER_ROW = 6, MAX_INPUTS = 4;
@@ -91,13 +98,20 @@ public class MainActivity extends Activity {
     private static final int MARGIN = 96, GAP = 36, RADIUS = 22;
     private static final int ROW1_TOP = 604, ROW_STEP = 224;
     private static final int GRID_MIN_TOP = 400; // more rows push the grid up, but not into the clock
-    private static final int ICON_TOP = 76, ICON_BUTTON = 72, ICON_SIZE = 40, ICON_GAP = 12; // level with the date
+    private static final int ICON_TOP = 78, ICON_BUTTON = 76, ICON_SIZE = 48, ICON_GAP = 20; // level with the date
+    // "Neon roxo 8-bit": night ground, purple neon for focus, magenta for live, warm white text.
+    private static final int GROUND = 0xFF0D0716, ACCENT = 0xFFB45CFF, LIVE = 0xFFFF3EA5, INK = 0xFFF4EFE6;
+    private static final int SHADOW_FOCUS = 0xFF2A0B4A, SHADOW_IDLE = 0x73000000, CLOCK_SHADOW = 0xFF3A1066;
+    private static final int STEP = 8; // pixel corner cut at 1920 px wide
+    private static final String NO_LIGATURES = "'liga' 0, 'clig' 0"; // Pixelify's "fi" reads like an "A"
     private float scale = 1f;
 
-    private static Typeface regular, semibold;
+    private static Typeface regular, semibold, display, caps; // Pixelify Sans, its 600, Jersey 10, Silkscreen
 
     private FrameLayout root; // the page, inside a vertical scroller
     private int tileW, tileH, gridTop; // app grid geometry, set by buildTiles
+    private String antennaId; // the TV's tuner input, or null if it has none
+    private int lead;         // grid slots before the apps: 1 when the TV Aberta tile is shown
     private final List<View> tiles = new ArrayList<>();
     private boolean dirty = true;
     private java.util.Locale shownLocale; // the TV's language (and region) when the page was built
@@ -114,6 +128,9 @@ public class MainActivity extends Activity {
     // The network tile follows the connection live: Wi-Fi bars, Ethernet or Offline. Only its icon and
     // label change, so nothing is rebuilt.
     private ImageView netIcon;
+    private View avatar; // the owner's picture in a pixel frame, left of the icons by the clock
+    private final List<View> footer = new ArrayList<>(); // the key hints along the bottom
+    private Drawable wallGif; // assets/wallpaper.gif, playing behind the page (Android 9+)
     private int netState = -1;
     private final ConnectivityManager.NetworkCallback networkChanged = new ConnectivityManager.NetworkCallback() {
         @Override public void onAvailable(Network n) { runOnUiThread(MainActivity.this::refreshNetwork); }
@@ -130,7 +147,8 @@ public class MainActivity extends Activity {
         saveConfig(getIntent());
         loadFonts();
         scale = getResources().getDisplayMetrics().widthPixels / 1920f;
-        getWindow().setBackgroundDrawable(background());
+        wallGif = gifWallpaper();
+        getWindow().setBackgroundDrawable(wallGif != null ? new ColorDrawable(GROUND) : background());
 
         ScrollView scroller = new ScrollView(this);
         scroller.setFillViewport(true);
@@ -145,23 +163,50 @@ public class MainActivity extends Activity {
         clock.setOrientation(LinearLayout.VERTICAL);
         shownLocale = java.util.Locale.getDefault();
         String day = Strings.datePattern();
-        TextClock date = clock(day, day, px(30), 0xA8FFFFFF, regular);
-        TextClock time = clock("h:mm", "H:mm", px(176), Color.WHITE, semibold);
-        time.setLetterSpacing(-0.028f);
-        time.setFontFeatureSettings("tnum");
-        time.setIncludeFontPadding(false);
+        TextClock date = clock(day, day, px(26), INK, caps);
+        date.setAllCaps(true);
+        date.setLetterSpacing(0.06f);
+        date.setSingleLine(true);
+        hardShadow(date, 3, CLOCK_SHADOW);
+        // Hours, a purple colon, minutes: three pieces, since one clock can't color its colon.
+        LinearLayout time = new LinearLayout(this);
+        time.setOrientation(LinearLayout.HORIZONTAL);
+        TextClock hh = clock("h", "H", px(248), INK, display);
+        TextView colon = text(px(248), ACCENT, display);
+        colon.setText(":");
+        TextClock mm = clock("mm", "mm", px(248), INK, display);
+        for (TextView t : new TextView[] {hh, colon, mm}) {
+            t.setIncludeFontPadding(false);
+            hardShadow(t, 8, CLOCK_SHADOW);
+            time.addView(t);
+        }
         clock.addView(date);
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-2, -2);
-        tp.topMargin = px(-20); // pull the big digits up under the date
+        tp.topMargin = px(-8); // tuck the big digits up under the date
         clock.addView(time, tp);
-        root.addView(clock, at(px(MARGIN), px(92), -2, -2));
+        // As wide as the screen allows, so a long date in the wide pixel caps isn't cut off.
+        root.addView(clock, at(px(MARGIN), px(72), getResources().getDisplayMetrics().widthPixels / 2, -2));
 
-        moveHint = text(px(24), 0xA8FFFFFF, regular);
+        moveHint = text(px(22), INK, caps);
         moveHint.setText(Strings.t("Use the arrows to move it, then press OK"));
         moveHint.setVisibility(View.GONE);
         root.addView(moveHint, at(px(MARGIN), px(ROW1_TOP - 64), -2, -2));
 
-        setContentView(scroller);
+        if (wallGif != null) {
+            // The GIF sits still behind the scroller, under the same dark scrim as a still wallpaper.
+            FrameLayout stage = new FrameLayout(this);
+            ImageView wall = new ImageView(this);
+            wall.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            wall.setImageDrawable(wallGif);
+            stage.addView(wall, new FrameLayout.LayoutParams(-1, -1));
+            View scrim = new View(this);
+            scrim.setBackground(scrim());
+            stage.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
+            stage.addView(scroller, new FrameLayout.LayoutParams(-1, -1));
+            setContentView(stage);
+        } else {
+            setContentView(scroller);
+        }
 
         IntentFilter f = new IntentFilter();
         f.addAction(Intent.ACTION_PACKAGE_ADDED);
@@ -170,12 +215,26 @@ public class MainActivity extends Activity {
         f.addDataScheme("package");
         if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(packagesChanged, f, Context.RECEIVER_EXPORTED);
         else registerReceiver(packagesChanged, f);
+        ScreenOn.listen(this);
 
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm != null) try {
             if (android.os.Build.VERSION.SDK_INT >= 24) cm.registerDefaultNetworkCallback(networkChanged);
             else cm.registerNetworkCallback(new NetworkRequest.Builder().build(), networkChanged);
         } catch (Exception ignored) {}
+    }
+
+    // The GIF only plays while the home screen is showing, so it costs nothing behind an app.
+    @Override
+    protected void onStart() {
+        super.onStart();
+        if (wallGif instanceof android.graphics.drawable.Animatable) ((android.graphics.drawable.Animatable) wallGif).start();
+    }
+
+    @Override
+    protected void onStop() {
+        if (wallGif instanceof android.graphics.drawable.Animatable) ((android.graphics.drawable.Animatable) wallGif).stop();
+        super.onStop();
     }
 
     @Override
@@ -265,8 +324,15 @@ public class MainActivity extends Activity {
     @Override
     public void onBackPressed() { /* home screen: nothing to go back to */ }
 
-    // Static warm gradient, drawn once by the window: no extra view, no animation.
+    // The wallpaper from assets/wallpaper.jpg under a dark scrim, so the clock and tiles stay readable.
+    // Without one, the static warm gradient. Drawn once by the window: no extra view, no animation.
     private Drawable background() {
+        Bitmap wall = asset("wallpaper.jpg");
+        if (wall != null) {
+            BitmapDrawable bd = new BitmapDrawable(getResources(), wall);
+            bd.setFilterBitmap(true);
+            return new LayerDrawable(new Drawable[] {bd, scrim()});
+        }
         GradientDrawable base = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[] {0xFF15100F, 0xFF0A0809, 0xFF050405});
         GradientDrawable warm = radial(0x36FF8048, 0.08f, -0.12f, px(1250));
@@ -306,16 +372,20 @@ public class MainActivity extends Activity {
         tileH = h;
 
         List<String> apps = appList(pm);
+        antennaId = antennaInput();
+        lead = antennaId != null ? 1 : 0;
         // Apps fill rows of six. With more rows the grid starts higher, so up to two rows of apps and
         // the bottom row still fit on screen; past that the page scrolls.
         int launchable = 0;
         for (String pkg : apps) if (launchIntent(pm, pkg) != null) launchable++;
-        int rows = Math.max(1, (launchable + PER_ROW - 1) / PER_ROW);
+        int rows = Math.max(1, (launchable + lead + PER_ROW - 1) / PER_ROW);
         gridTop = Math.max(px(GRID_MIN_TOP), px(ROW1_TOP) - (rows - 1) * px(ROW_STEP));
         int bottomTop = gridTop + rows * px(ROW_STEP);
         ((FrameLayout.LayoutParams) moveHint.getLayoutParams()).topMargin = gridTop - px(64);
-        root.setMinimumHeight(bottomTop + h + px(MARGIN));
+        root.setMinimumHeight(bottomTop + h * 120 / 145 + px(MARGIN));
 
+        if (antennaId != null)
+            addTile(root, ANTENNA, ANTENNA_LABEL, null, PixelIcon.ANTENNA, null, slotX(0), slotY(0), w, h);
         for (String pkg : apps) {
             Intent li = launchIntent(pm, pkg);
             if (li == null) continue;
@@ -334,18 +404,19 @@ public class MainActivity extends Activity {
             addTile(root, pkg, label, banner, null, icon, gridX(i), gridY(i), w, h);
         }
 
-        // Bottom row: Play Store, HDMI inputs, Settings and Add app, six at most.
-        int col = 0;
+        // Bottom row: Play Store, HDMI inputs, Settings and Add app, six at most, a little shorter.
+        int col = 0, toolH = h * 120 / 145;
         boolean store = !apps.contains(PLAY_STORE) && launchIntent(pm, PLAY_STORE) != null;
         List<TvInputInfo> inputs = hdmiInputs();
         int room = PER_ROW - 2 - (store ? 1 : 0);
         if (inputs.size() > room) inputs = inputs.subList(0, room);
         if (store)
-            addTile(root, PLAY_STORE, "Play Store", null, LineIcon.PLAY, null, m + col++ * (w + g), bottomTop, w, h);
+            addTile(root, PLAY_STORE, "Play Store", null, PixelIcon.PLAY, null, m + col++ * (w + g), bottomTop, w, toolH);
         for (TvInputInfo in : inputs)
-            addTile(root, in.getId(), inputLabel(in), null, LineIcon.HDMI, null, m + col++ * (w + g), bottomTop, w, h);
-        addTile(root, SETTINGS, Strings.t("Settings"), null, LineIcon.SETTINGS, null, m + col++ * (w + g), bottomTop, w, h);
-        addTile(root, ADD, Strings.t("Add app"), null, LineIcon.PLUS, null, m + col * (w + g), bottomTop, w, h);
+            addTile(root, in.getId(), inputLabel(in), null, PixelIcon.HDMI, null, m + col++ * (w + g), bottomTop, w, toolH);
+        addTile(root, SETTINGS, Strings.t("Settings"), null, PixelIcon.SETTINGS, null, m + col++ * (w + g), bottomTop, w, toolH);
+        addTile(root, ADD, Strings.t("Add app"), null, PixelIcon.PLUS, null, m + col * (w + g), bottomTop, w, toolH);
+        addFooter(bottomTop + toolH + px(40));
 
         // Plain icons at the top right, level with the date: any settings shortcuts picked, then the
         // network icon. Added last, so the first app keeps first focus; Up from the apps reaches them.
@@ -354,6 +425,8 @@ public class MainActivity extends Activity {
         // The last icon's right edge lines up with the apps' (its focus circle sticks out past them).
         int qx = getResources().getDisplayMetrics().widthPixels - m + (ib - px(ICON_SIZE)) / 2
                 - (quick.size() + 1) * ib - quick.size() * ig;
+        if (avatar != null) root.removeView(avatar);
+        avatar = avatarView(qx - ib - ig);
         for (int q : quick) {
             addIcon(QUICK + QUICK_NAMES[q], Strings.t(QUICK_LABELS[q]), new LineIcon(QUICK_ICONS[q]), qx);
             qx += ib + ig;
@@ -371,55 +444,67 @@ public class MainActivity extends Activity {
     private void addTile(ViewGroup parent, final String key, String label, Drawable banner, int[] lineIcon, Drawable appIcon,
                          int x, int y, int w, int h) {
         FrameLayout card = new FrameLayout(this);
-        final GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(px(RADIUS));
+        final boolean antenna = ANTENNA.equals(key);
+        // Banners sit in a thin pale frame; the rest are dark glass. Focus swaps in the purple neon.
+        final int idleFrame = banner != null ? 0x2EF4EFE6 : 0x24F4EFE6;
+        final PixelFrame bg = new PixelFrame(px(STEP), idleFrame, px(3),
+                banner != null ? 0xFF16101C : antenna ? 0xEB160A28 : 0xA8120822);
+        bg.set(idleFrame, px(3), px(6), SHADOW_IDLE);
         if (banner != null) {
-            bg.setColor(0xFF1E1A1C);
-            ImageView iv = new ImageView(this);
-            iv.setImageDrawable(fit(banner, w, h));
-            card.addView(iv, new FrameLayout.LayoutParams(-1, -1));
+            bg.content(fit(banner, w, h));
         } else {
-            // Quiet "glass" tile: icon above label.
-            bg.setColor(0x13FFFFFF);
-            bg.setStroke(Math.max(1, px(2)), 0x17FFFFFF);
+            // Glass tile: pixel icon above label.
             LinearLayout inner = new LinearLayout(this);
             inner.setOrientation(LinearLayout.VERTICAL);
             inner.setGravity(Gravity.CENTER);
             ImageView iv = new ImageView(this);
-            int size = lineIcon != null ? px(44) : px(64);
-            if (lineIcon != null) iv.setImageDrawable(new LineIcon(lineIcon));
+            int size = lineIcon != null ? (antenna ? px(60) : px(36)) : px(64); // multiples of 12: even pixels
+            if (lineIcon != null) iv.setImageDrawable(new PixelIcon(lineIcon, antenna ? ACCENT : INK));
             else if (appIcon != null) iv.setImageDrawable(fit(appIcon, size, size));
             inner.addView(iv, new LinearLayout.LayoutParams(size, size));
-            TextView t = text(px(24), 0xE0FFFFFF, regular);
+            TextView t = text(antenna ? px(30) : px(24), INK, antenna ? semibold : regular);
             t.setText(label);
             t.setSingleLine(true);
             t.setEllipsize(android.text.TextUtils.TruncateAt.END);
             t.setGravity(Gravity.CENTER);
             t.setPadding(px(16), 0, px(16), 0);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
-            lp.topMargin = px(12);
+            lp.topMargin = px(10);
             inner.addView(t, lp);
             card.addView(inner, new FrameLayout.LayoutParams(-1, -1));
+            if (antenna) {
+                // "AO VIVO" with a magenta pixel, top left.
+                TextView live = text(px(15), INK, caps);
+                live.setText("AO VIVO");
+                ColorDrawable dot = new ColorDrawable(LIVE);
+                dot.setBounds(0, 0, px(10), px(10));
+                live.setCompoundDrawablesRelative(dot, null, null, null);
+                live.setCompoundDrawablePadding(px(6));
+                FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.START);
+                bp.leftMargin = px(16);
+                bp.topMargin = px(14);
+                card.addView(live, bp);
+            }
         }
         card.setBackground(bg);
-        card.setClipToOutline(true);
         card.setFocusable(true);
         card.setTag(key);
 
         // Banner tiles show their name underneath when focused.
-        final TextView caption = banner == null ? null : text(px(24), Color.WHITE, regular);
+        final TextView caption = banner == null ? null : text(px(24), INK, regular);
         if (caption != null) {
             caption.setText(label);
             caption.setGravity(Gravity.CENTER_HORIZONTAL);
             caption.setVisibility(View.INVISIBLE);
         }
 
-        final boolean glass = banner == null;
         card.setOnFocusChangeListener((v, has) -> {
             if (has) focusedKey = key;
-            if (glass) bg.setColor(has ? 0x38FFFFFF : 0x13FFFFFF);
-            v.animate().scaleX(has ? 1.1f : 1f).scaleY(has ? 1.1f : 1f).translationZ(has ? px(26) : 0)
-                    .setDuration(140).withLayer().start();
+            if (has) bg.set(ACCENT, px(5), px(8), SHADOW_FOCUS);
+            else bg.set(idleFrame, px(3), px(6), SHADOW_IDLE);
+            if (has) ((View) v.getParent()).bringToFront();
+            v.animate().scaleX(has ? 1.08f : 1f).scaleY(has ? 1.08f : 1f).translationY(has ? -px(4) : 0)
+                    .setDuration(140).start();
             if (caption != null) caption.setVisibility(has ? View.VISIBLE : View.INVISIBLE);
         });
         final boolean editable = rowApps.contains(key);
@@ -460,13 +545,68 @@ public class MainActivity extends Activity {
         tiles.add(card);
     }
 
+    // Darker at the top (clock) and bottom (tiles), lighter in between, so the picture still shows.
+    private static Drawable scrim() {
+        return new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[] {0xA8140628, 0x38280A50, 0x571E083C, 0xE60C041A});
+    }
+
+    // An animated wallpaper, decoded frame by frame as it plays instead of all at once.
+    private Drawable gifWallpaper() {
+        if (android.os.Build.VERSION.SDK_INT < 28) return null;
+        try {
+            Drawable d = android.graphics.ImageDecoder.decodeDrawable(
+                    android.graphics.ImageDecoder.createSource(getAssets(), "wallpaper.gif"));
+            if (d instanceof android.graphics.drawable.AnimatedImageDrawable)
+                ((android.graphics.drawable.AnimatedImageDrawable) d).setRepeatCount(
+                        android.graphics.drawable.AnimatedImageDrawable.REPEAT_INFINITE);
+            return d;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Bitmap asset(String name) {
+        try (java.io.InputStream in = getAssets().open(name)) { return BitmapFactory.decodeStream(in); }
+        catch (Exception e) { return null; }
+    }
+
+    // The owner's picture from assets/avatar.jpg in a purple pixel frame, the size of the network
+    // icon. Not focusable: it only says whose TV this is.
+    private View avatarView(int x) {
+        Bitmap src = asset("avatar.jpg");
+        if (src == null) return null;
+        int b = px(ICON_BUTTON);
+        View v = new View(this);
+        v.setBackground(new PixelFrame(px(STEP), ACCENT, px(4), 0).content(fit(new BitmapDrawable(getResources(), src), b, b)));
+        v.setFocusable(false);
+        root.addView(v, at(x, px(ICON_TOP), b, b));
+        return v;
+    }
+
+    // Key hints along the bottom, in arcade caps.
+    private void addFooter(int y) {
+        for (View f : footer) root.removeView(f);
+        footer.clear();
+        int m = px(MARGIN), width = getResources().getDisplayMetrics().widthPixels;
+        TextView keys = text(px(18), 0xC7F4EFE6, caps);
+        keys.setLetterSpacing(0.06f);
+        keys.setText("OK ABRIR \u00B7 SEGURE OK PARA EDITAR");
+        root.addView(keys, at(m, y, -2, -2));
+        TextView up = text(px(18), ACCENT, caps);
+        up.setLetterSpacing(0.06f);
+        up.setText("\u25B2 REDE");
+        up.setGravity(Gravity.END);
+        root.addView(up, at(m, y, width - 2 * m, -2));
+        footer.add(keys);
+        footer.add(up);
+    }
+
     // An icon on its own, no tile or label: a glass circle shows behind it only while it's focused.
     private ImageView addIcon(final String key, String label, Drawable icon, int x) {
         int b = px(ICON_BUTTON), size = px(ICON_SIZE);
         FrameLayout card = new FrameLayout(this);
-        final GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.OVAL);
-        bg.setColor(Color.TRANSPARENT);
+        final PixelFrame bg = new PixelFrame(px(STEP), 0x24F4EFE6, px(3), 0x99120822);
         card.setBackground(bg);
         ImageView iv = new ImageView(this);
         iv.setImageDrawable(icon);
@@ -476,8 +616,9 @@ public class MainActivity extends Activity {
         card.setContentDescription(label);
         card.setOnFocusChangeListener((v, has) -> {
             if (has) focusedKey = key;
-            bg.setColor(has ? 0x38FFFFFF : Color.TRANSPARENT);
-            v.animate().scaleX(has ? 1.1f : 1f).scaleY(has ? 1.1f : 1f).setDuration(140).withLayer().start();
+            if (has) bg.set(ACCENT, px(5), px(6), SHADOW_FOCUS);
+            else bg.set(0x24F4EFE6, px(3), 0, 0);
+            v.animate().scaleX(has ? 1.08f : 1f).scaleY(has ? 1.08f : 1f).setDuration(140).start();
         });
         card.setOnClickListener(v -> open(key));
         FrameLayout wrap = new FrameLayout(this);
@@ -495,6 +636,9 @@ public class MainActivity extends Activity {
             return;
         } else if (SETTINGS.equals(key)) {
             i = new Intent(Settings.ACTION_SETTINGS);
+        } else if (ANTENNA.equals(key)) {
+            openAntenna();
+            return;
         } else if (isInput(key)) {
             openInput(key);
             return;
@@ -589,14 +733,14 @@ public class MainActivity extends Activity {
         if (state == netState) return;
         netState = state;
         if (state == ETHERNET) {
-            netIcon.setImageDrawable(new LineIcon(LineIcon.ETHERNET));
+            netIcon.setImageDrawable(new PixelIcon(PixelIcon.ETHERNET, INK));
         } else {
             // The whole Wi-Fi fan dim, with the bars it has bright on top. Offline is a slash instead.
-            LineIcon fan = new LineIcon(LineIcon.WIFI);
-            fan.setAlpha(0x47);
-            int[] top = state == OFFLINE ? LineIcon.SLASH : state == 1 ? LineIcon.WIFI_1
-                    : state == 2 ? LineIcon.WIFI_2 : LineIcon.WIFI;
-            netIcon.setImageDrawable(new LayerDrawable(new Drawable[] {fan, new LineIcon(top)}));
+            PixelIcon fan = new PixelIcon(PixelIcon.WIFI, 0x47F4EFE6);
+            int[] top = state == OFFLINE ? PixelIcon.SLASH : state == 1 ? PixelIcon.WIFI_1
+                    : state == 2 ? PixelIcon.WIFI_2 : PixelIcon.WIFI;
+            netIcon.setImageDrawable(new LayerDrawable(new Drawable[] {fan,
+                    new PixelIcon(top, state == OFFLINE ? LIVE : INK)}));
         }
         ((View) netIcon.getParent()).setContentDescription(
                 state == OFFLINE ? Strings.t("Offline") : state == ETHERNET ? "Ethernet" : "Wi-Fi");
@@ -669,10 +813,7 @@ public class MainActivity extends Activity {
         list.setDivider(null);
         list.setVerticalScrollBarEnabled(false);
         list.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        GradientDrawable focus = new GradientDrawable();
-        focus.setCornerRadius(px(RADIUS));
-        focus.setColor(0x38FFFFFF);
-        list.setSelector(focus);
+        list.setSelector(new ColorDrawable(0x80B45CFF));
         // Icons load as rows appear, drawn small to save RAM.
         final PackageManager pm = getPackageManager();
         final int size = px(48);
@@ -682,7 +823,7 @@ public class MainActivity extends Activity {
             @Override public Object getItem(int pos) { return labels.get(pos); }
             @Override public long getItemId(int pos) { return pos; }
             @Override public View getView(int pos, View convert, ViewGroup parent) {
-                TextView t = convert != null ? (TextView) convert : text(px(30), 0xE6FFFFFF, regular);
+                TextView t = convert != null ? (TextView) convert : text(px(30), INK, regular);
                 t.setText(labels.get(pos));
                 t.setSingleLine(true);
                 t.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -713,7 +854,7 @@ public class MainActivity extends Activity {
 
         d.setContentView(box);
         Window w = d.getWindow();
-        w.setBackgroundDrawable(new ColorDrawable(0xF7161113));
+        w.setBackgroundDrawable(new ColorDrawable(0xF7160A28));
         w.setLayout(px(640), -1);
         w.setGravity(Gravity.END);
         w.setDimAmount(0.5f);
@@ -728,28 +869,26 @@ public class MainActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         int pad = px(10), rowH = px(64);
         box.setPadding(pad, pad, pad, pad);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(px(RADIUS));
-        bg.setColor(0xFF231D1F);
-        bg.setStroke(Math.max(1, px(2)), 0x17FFFFFF);
+        PixelFrame bg = new PixelFrame(px(STEP), ACCENT, px(4), 0xFF160A28);
         box.setBackground(bg);
         float widest = 0; // some languages need more room than the tile is wide
         for (int i = 0; i < items.length; i++) {
             final int which = i;
-            final TextView t = text(px(26), 0xD9FFFFFF, regular);
-            t.setText(Strings.t(items[i]));
+            final TextView t = text(px(26), INK, regular);
+            final String label = Strings.t(items[i]);
+            t.setText(label);
             t.setSingleLine(true);
             t.setGravity(Gravity.CENTER_VERTICAL);
-            t.setPadding(px(22), 0, px(22), 0);
-            widest = Math.max(widest, t.getPaint().measureText(t.getText().toString()) + 2 * px(22) + 2 * pad);
-            final GradientDrawable focus = new GradientDrawable();
-            focus.setCornerRadius(px(RADIUS - pad));
-            focus.setColor(Color.TRANSPARENT);
+            t.setPadding(px(52), 0, px(22), 0);
+            widest = Math.max(widest, t.getPaint().measureText(label) + px(52) + px(22) + 2 * pad);
+            final ColorDrawable focus = new ColorDrawable(Color.TRANSPARENT);
             t.setBackground(focus);
             t.setFocusable(true);
             t.setOnFocusChangeListener((v, has) -> {
-                focus.setColor(has ? 0x38FFFFFF : Color.TRANSPARENT);
-                t.setTextColor(has ? Color.WHITE : 0xD9FFFFFF);
+                focus.setColor(has ? ACCENT : Color.TRANSPARENT);
+                t.setTextColor(has ? GROUND : INK);
+                t.setText(has ? "\u25B6 " + label : label);
+                t.setPadding(has ? px(22) : px(52), 0, px(22), 0);
             });
             t.setOnClickListener(v -> {
                 d.dismiss();
@@ -848,13 +987,21 @@ public class MainActivity extends Activity {
         getSharedPreferences(PREFS, 0).edit().putString("apps", android.text.TextUtils.join(",", rowApps)).apply();
     }
 
-    // Where app number i sits in the grid.
+    // Where app number i sits in the grid (after the TV Aberta tile, if there is one).
     private int gridX(int i) {
-        return px(MARGIN) + (i % PER_ROW) * (tileW + px(GAP));
+        return slotX(i + lead);
     }
 
     private int gridY(int i) {
-        return gridTop + (i / PER_ROW) * px(ROW_STEP);
+        return slotY(i + lead);
+    }
+
+    private int slotX(int slot) {
+        return px(MARGIN) + (slot % PER_ROW) * (tileW + px(GAP));
+    }
+
+    private int slotY(int slot) {
+        return gridTop + (slot / PER_ROW) * px(ROW_STEP);
     }
 
     private View tile(String key) {
@@ -867,10 +1014,7 @@ public class MainActivity extends Activity {
         View card = tile(key);
         if (card == null) return;
         movingKey = key;
-        GradientDrawable outline = new GradientDrawable();
-        outline.setCornerRadius(px(RADIUS));
-        outline.setStroke(px(4), Color.WHITE);
-        ((FrameLayout) card).setForeground(outline);
+        ((FrameLayout) card).setForeground(new PixelFrame(px(STEP), INK, px(4), 0));
         moveHint.setVisibility(View.VISIBLE);
         card.requestFocus();
     }
@@ -910,6 +1054,39 @@ public class MainActivity extends Activity {
         return true; // up/down and everything else stay put while moving
     }
 
+    // The antenna: the TV's first tuner input (on this Skyworth/MediaTek TV, TunerInputService/HW0).
+    private String antennaInput() {
+        TvInputManager tim = (TvInputManager) getSystemService(Context.TV_INPUT_SERVICE);
+        if (tim == null) return null;
+        List<String> ids = new ArrayList<>();
+        for (TvInputInfo in : tim.getTvInputList())
+            if (in.getType() == TvInputInfo.TYPE_TUNER && in.getParentId() == null && !in.isHidden(this)
+                    && !in.getServiceInfo().packageName.equals(getPackageName())
+                    && (in.getServiceInfo().applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0)
+                ids.add(in.getId());
+        if (ids.isEmpty()) return null;
+        Collections.sort(ids);
+        return ids.get(0);
+    }
+
+    // Asks Live TV to watch the tuner input. The TV keeps the last source it used, so a plain launch
+    // would reopen an HDMI; naming the input switches back to the antenna. Falls back to the
+    // passthrough form, then to whatever opens HDMI tiles.
+    private void openAntenna() {
+        if (antennaId == null) return;
+        Intent[] tries = {
+                new Intent(Intent.ACTION_VIEW, TvContract.buildChannelsUriForInput(antennaId)),
+                new Intent(Intent.ACTION_VIEW, TvContract.buildChannelUriForPassthroughInput(antennaId))};
+        for (Intent t : tries) {
+            t.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            try {
+                startActivity(t);
+                return;
+            } catch (Exception ignored) {}
+        }
+        openInput(antennaId);
+    }
+
     private static boolean isInput(String key) {
         return key.indexOf('/') > 0;
     }
@@ -945,10 +1122,26 @@ public class MainActivity extends Activity {
     }
 
     // Xiaomi TVs ship MiLan Pro but don't register it by name; every other TV gets Roboto.
-    private static void loadFonts() {
+    // The pixel fonts ship in assets/fonts (SIL Open Font License, see OFL-licencas.txt). If one
+    // can't load, the TV's own font stands in.
+    private void loadFonts() {
         if (regular != null) return;
-        regular = fromFile("/system/fonts/MILanPro_Normal.ttf", Typeface.create("sans-serif", Typeface.NORMAL));
-        semibold = fromFile("/system/fonts/MILanPro_SemiBold.ttf", Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        Typeface sans = Typeface.create("sans-serif", Typeface.NORMAL);
+        regular = font("fonts/PixelifySans.ttf", "'wght' 400", sans);
+        semibold = font("fonts/PixelifySans.ttf", "'wght' 600", Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        display = font("fonts/Jersey10.ttf", null, semibold);
+        caps = font("fonts/Silkscreen.ttf", null, regular);
+    }
+
+    private Typeface font(String asset, String axes, Typeface fallback) {
+        try {
+            Typeface.Builder b = new Typeface.Builder(getAssets(), asset);
+            if (axes != null) b.setFontVariationSettings(axes);
+            Typeface t = b.build();
+            return t != null ? t : fallback;
+        } catch (Exception e) {
+            return fallback;
+        }
     }
 
     private static Typeface fromFile(String path, Typeface fallback) {
@@ -979,6 +1172,7 @@ public class MainActivity extends Activity {
 
     private TextClock clock(String f12, String f24, int px, int color, Typeface tf) {
         TextClock c = new TextClock(this);
+        c.setFontFeatureSettings(NO_LIGATURES);
         c.setFormat12Hour(f12);
         c.setFormat24Hour(f24);
         c.setTextSize(TypedValue.COMPLEX_UNIT_PX, px);
@@ -987,8 +1181,14 @@ public class MainActivity extends Activity {
         return c;
     }
 
+    // A hard pixel shadow, down and right (the tiny radius keeps it sharp; 0 would turn it off).
+    private void hardShadow(TextView t, int offset, int color) {
+        t.setShadowLayer(0.01f, px(offset), px(offset), color);
+    }
+
     private TextView text(int px, int color, Typeface tf) {
         TextView t = new TextView(this);
+        t.setFontFeatureSettings(NO_LIGATURES);
         t.setTextSize(TypedValue.COMPLEX_UNIT_PX, px);
         t.setTextColor(color);
         if (tf != null) t.setTypeface(tf);
